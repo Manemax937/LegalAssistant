@@ -73,14 +73,28 @@ def retrieve_docs(query, file_name=None):
     try:
         model = get_embedding_model()
         faiss_db = FAISS.load_local(FAISS_DB_PATH, model, allow_dangerous_deserialization=True)
-        retrieved_docs = faiss_db.similarity_search(query, k=6)
         
         if file_name:
+            # 1. Try vector similarity search with explicit source metadata filter
+            try:
+                filtered_docs = faiss_db.similarity_search(query, k=6, filter={"source": file_name})
+                if filtered_docs:
+                    return filtered_docs
+            except Exception as fe:
+                print(f"Metadata filter search exception: {fe}")
+
+            # 2. Search broader pool of chunks and filter manually by source file name
+            retrieved_docs = faiss_db.similarity_search(query, k=30)
             filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("source") == file_name]
             if filtered_docs:
                 return filtered_docs
                 
-        return retrieved_docs
+            # 3. CRITICAL FIX: If no chunks match target file_name, return [] (empty list)
+            # so api_server.py extracts text directly from the target PDF file on disk.
+            # NEVER fallback to returning chunks from a different document!
+            return []
+
+        return faiss_db.similarity_search(query, k=6)
     except Exception as e:
         print(f"Error retrieving docs from vector database: {e}")
         return []
