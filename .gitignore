@@ -1,0 +1,35 @@
+# Environment variables & API keys
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+ai-lawyer/.env
+
+# Databases & Vector Stores
+*.db
+*.sqlite
+*.sqlite3
+lexassist.db
+ai-lawyer/lexassist.db
+ai-lawyer/vectorstore/
+ai-lawyer/pdfs/
+
+# Python virtual environment & cache
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / Next.js build output & dependencies
+node_modules/
+.next/
+out/
+build/
+dist/
+.DS_Store
+Thumbs.db
+*.log
