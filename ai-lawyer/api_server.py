@@ -252,16 +252,12 @@ def _run_ai_risk_analysis(doc, db) -> None:
     # 2. Fallback to stored metadata when no PDF text available
     if not doc_text.strip():
         doc_text = (
-            f"Document Name: {doc.name}
-"
-            f"Type: {doc.type}
-"
-            f"Summary: {doc.summary}
-"
+            f"Document Name: {doc.name}\n"
+            f"Type: {doc.type}\n"
+            f"Summary: {doc.summary}\n"
         )
         if doc.clauses:
-            doc_text += "Clauses: " + ", ".join(c.label for c in doc.clauses) + "
-"
+            doc_text += "Clauses: " + ", ".join(c.label for c in doc.clauses) + "\n"
 
     doc_text = doc_text[:8000]  # stay within token budget
 
