@@ -538,6 +538,35 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
             citations=[{"docName": doc_name, "section": "Query Guidance"}]
         )
 
+    # Exception handling: Gibberish / nonsense input (random letters, no vowels, too short)
+    def _is_gibberish(text: str) -> bool:
+        words = text.lower().split()
+        if not words:
+            return True
+        # Single word shorter than 3 chars that is not alphabetic-only legal term
+        if len(words) == 1:
+            word = words[0]
+            if len(word) < 3:
+                return True
+            # No vowels at all in a short word = gibberish (e.g. "abcd", "xyz", "qwerty")
+            vowels = set("aeiou")
+            has_vowel = any(c in vowels for c in word)
+            if not has_vowel and len(word) < 8:
+                return True
+            # Short alphabetic-only strings with no spaces that look random
+            if word.isalpha() and len(word) <= 5:
+                # Allow common short legal words
+                allow_list = {"act", "law", "case", "sue", "mou", "ipo", "nda", "crpc", "ipc", "clra"}
+                if word not in allow_list:
+                    return True
+        return False
+
+    if _is_gibberish(raw_query):
+        return ChatResponse(
+            answer=f"- **Invalid Input**:\n  `{raw_query}` does not appear to be a valid legal question.\n\n- **How to ask a question**:\n  Please type a meaningful question about the document, such as:\n  - *What is this case about?*\n  - *Who are the parties involved?*\n  - *What judgments or orders were issued?*\n  - *What key clauses does this contract contain?*",
+            citations=[{"docName": doc_name, "section": "Input Guidance"}]
+        )
+
     # 1. Retrieve vector chunks if FAISS vector DB has indexed this file
     docs = []
     if retrieve_pdf_docs is not None and source_file:
