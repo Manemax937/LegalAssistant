@@ -507,12 +507,36 @@ def extract_pdf_text(file_path: str) -> str:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)):
+    import re
     doc = db.query(DocumentDB).filter(DocumentDB.id == request.documentId).first() if request.documentId else None
     if not doc and db.query(DocumentDB).first():
         doc = db.query(DocumentDB).first()
 
     doc_name = doc.name if doc else request.documentName or "Selected Document"
     source_file = doc.source_file if doc else None
+    raw_query = (request.query or "").strip()
+
+    # Exception handling: Empty input
+    if not raw_query:
+        return ChatResponse(
+            answer="Please enter a question regarding the document to begin analysis.",
+            citations=[{"docName": doc_name, "section": "Input Prompt"}]
+        )
+
+    # Exception handling: Pure numbers or digits (e.g. "1234", "0000")
+    clean_text = re.sub(r"[^\w\s]", "", raw_query)
+    if clean_text.isdigit():
+        return ChatResponse(
+            answer=f"- **Invalid Query Format**:\n  The query `{raw_query}` consists only of numbers. Please ask a specific legal question about **{doc_name}**.\n\n- **Suggested Questions**:\n  - *What is the background and summary of this case/document?*\n  - *What procedural orders or judgments were passed?*\n  - *What liabilities or risk flags are present?",
+            citations=[{"docName": doc_name, "section": "Query Guidance"}]
+        )
+
+    # Exception handling: Greetings or single test words
+    if raw_query.lower() in ["hi", "hello", "hey", "test", "ping"]:
+        return ChatResponse(
+            answer=f"- **LexAssist AI Ready**:\n  Hello! I am ready to answer questions about **{doc_name}**.\n\n- **Suggested Questions**:\n  - *Summarize the main background and rulings in this document.*\n  - *What key clauses or dates are mentioned?*",
+            citations=[{"docName": doc_name, "section": "Query Guidance"}]
+        )
 
     # 1. Retrieve vector chunks if FAISS vector DB has indexed this file
     docs = []
@@ -560,7 +584,6 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         answer=f"Analysis for {doc_name}: Regarding '{request.query}', the agreement provides standard terms. {summary_context}",
         citations=[{"docName": doc_name, "section": "Database Context"}],
     )
-
 
 @app.post("/drafting", response_model=DraftResponse)
 def drafting(request: DraftRequest):
