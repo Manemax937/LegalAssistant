@@ -651,23 +651,81 @@ def run_risk_analysis(payload: dict, db: Session = Depends(get_db)):
     }
 
 
+
 @app.post("/research", response_model=ResearchResponse)
 def research(request: ResearchRequest):
+    """POST /research - uses Groq LLM for a real AI-synthesised answer
+    about the legal query, then returns it alongside ranked precedent cards."""
     lower = request.query.lower()
-    results = [dict(item) for item in RESEARCH_RESULTS if not request.topic or request.topic in item["tags"]]
+
+    # 1. Filter and boost static precedent cards by relevance
+    results = [dict(item) for item in RESEARCH_RESULTS
+               if not request.topic or request.topic in item["tags"]]
     for item in results:
         boost = 0
-        if "arbitr" in lower and "Arbitration" in item["tags"]:
-            boost = 8
-        elif "liab" in lower and "Liability" in item["tags"]:
-            boost = 8
-        elif "non-compete" in lower and "Non-compete" in item["tags"]:
+        if any(w in lower for w in ["arbitr"]) and "Arbitration" in item["tags"]:
+            boost = 12
+        elif any(w in lower for w in ["liab", "damage", "indemnif"]) and "Liability" in item["tags"]:
+            boost = 12
+        elif any(w in lower for w in ["non-compete", "non compete", "compete"]) and "Non-compete" in item["tags"]:
+            boost = 12
+        elif any(w in lower for w in ["confid", "nda", "trade secret"]) and "Confidentiality" in item["tags"]:
+            boost = 12
+        elif any(w in lower for w in ["ip", "intellectual", "patent", "copyright"]) and "IP" in item["tags"]:
+            boost = 12
+        elif any(w in lower for w in ["contract", "breach", "enforce"]) and "Contracts" in item["tags"]:
             boost = 8
         item["relevance"] = min(99, item["relevance"] + boost)
-    results.sort(key=lambda item: item["relevance"], reverse=True)
-    answer = f'Based on legal precedent and statutory analysis, the top results for "{request.query}" highlight key rules on enforceability, damages, and contractual rights.'
-    return ResearchResponse(answer=answer, results=results)
+    results.sort(key=lambda x: x["relevance"], reverse=True)
+    top_results = results[:6]
 
+    # 2. Build context from top precedent cards
+    lines_ctx = []
+    for r in top_results:
+        title = r["title"]
+        citation = r["citation"]
+        court = r["court"]
+        year = r["year"]
+        summary = r["summary"]
+        lines_ctx.append(f"Case: {title} ({citation}) - {court} ({year})")
+        lines_ctx.append(f"Summary: {summary}")
+        lines_ctx.append("")
+    precedent_context = "\n".join(lines_ctx)
+
+    # 3. Call Groq LLM for a real AI-synthesised answer
+    ai_answer = ""
+    try:
+        from rag_pipeline import get_llm
+        llm = get_llm()
+        if llm is not None:
+            user_query = request.query
+            prompt = (
+                "You are an expert legal research assistant specialising in case law and judicial precedent.\n\n"
+                f"User query: {user_query}\n\n"
+                "Relevant precedents retrieved:\n"
+                f"{precedent_context}\n"
+                "Task: Write a clear, authoritative 2-4 paragraph synthesis that:\n"
+                "1. Directly answers the user's legal research question\n"
+                "2. Cites the relevant cases above where applicable\n"
+                "3. Explains the controlling legal rule or standard\n"
+                "4. Notes any important jurisdictional nuances or exceptions\n\n"
+                "Write in a professional legal research tone. Use flowing paragraphs, not bullet points."
+            )
+            response = llm.invoke(prompt)
+            ai_answer = getattr(response, "content", str(response)).strip()
+    except Exception as e:
+        print(f"[Research AI] LLM call failed: {e}")
+
+    # 4. Fallback if LLM unavailable
+    if not ai_answer:
+        q = request.query
+        ai_answer = (
+            f'Based on legal precedent and statutory analysis, the top results for "{q}" '
+            "highlight key rules on enforceability, damages, and contractual rights. "
+            "Please review the precedent cards below for detailed analysis."
+        )
+
+    return ResearchResponse(answer=ai_answer, results=top_results)
 
 @app.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)):
