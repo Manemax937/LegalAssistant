@@ -33,30 +33,26 @@ def get_context(documents):
     context = "\n\n".join([getattr(doc, 'page_content', str(doc)) for doc in documents])
     return context
 
-custom_prompt_template = """
-You are LexAssist AI, an expert legal assistant.
-Use the legal document context and conversation history to accurately answer the question.
-If the context does not contain the complete answer, use your expert legal knowledge while noting any context gaps.
+custom_prompt_template = """You are LexAssist AI, an authoritative legal assistant.
+Analyze the provided document context and answer the user's question accurately and thoroughly.
 
-CRITICAL FORMATTING INSTRUCTIONS:
-- You MUST format your answer with clean section headers and bullet points.
-- ALWAYS place each bullet point on its own NEW LINE starting with a hyphen ('- ').
-- DO NOT run bullet points together into a single sentence or continuous paragraph.
-- Use bold text (**Title**) for key terms, sections, or provisions.
-
-Example Output Format:
-### Summary & Key Provisions
-- **Grounds**: Adultery, cruelty, desertion, or mutual consent.
-- **Procedure**: Petition filed in District Court.
-
-- **Alimony**: Spousal support liabilities during separation.
+CRITICAL INSTRUCTIONS:
+- Directly answer the specific question asked: "{question}".
+- Base your response primarily on the Document Context provided below.
+- Structure your response using clear markdown headings (###) and bullet points (- ).
+- Use bolding (**Key Term**) for important legal terms, party names, dates, or statutory sections.
+- Every bullet point MUST be on its own line starting with "- ".
+- DO NOT output generic or fixed example templates.
 
 Previous Conversation:
 {history}
 
-Question: {question} 
-Context: {context} 
-Answer:
+User Question: {question}
+
+Document Context:
+{context}
+
+Detailed Legal Answer:
 """
 
 def answer_query(documents, model=None, query="", history=""):
