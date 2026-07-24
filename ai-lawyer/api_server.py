@@ -216,7 +216,132 @@ def _serialize_doc_db(doc: DocumentDB) -> dict:
 
 
 def _score_risk(name: str) -> int:
-    return 18 + (sum(ord(ch) for ch in name) % 68)
+    """Heuristic fallback scoring when AI is unavailable."""
+    lower = name.lower()
+    score = 35
+    if any(w in lower for w in ["agreement", "contract", "services", "master"]):
+        score += 15
+    if any(w in lower for w in ["nda", "confidential", "non-disclosure"]):
+        score += 5
+    if any(w in lower for w in ["lease", "rental", "employment"]):
+        score += 10
+    if any(w in lower for w in ["divorce", "litigation", "dispute", "case"]):
+        score += 20
+    return min(score, 95)
+
+
+def _run_ai_risk_analysis(doc, db) -> None:
+    """Use Groq LLM for real AI-powered legal risk analysis.
+    Reads actual PDF text, sends to LLM with a structured prompt,
+    then updates doc.risk_score and doc.risks in the database."""
+    import json as _json
+
+    try:
+        from rag_pipeline import get_llm
+    except Exception as exc:
+        print(f"[RiskAI] Could not import get_llm: {exc}")
+        return
+
+    # 1. Extract document text from PDF on disk
+    doc_text = ""
+    if doc.source_file:
+        pdf_path = PDFS_DIR / doc.source_file
+        if pdf_path.exists():
+            doc_text = extract_pdf_text(str(pdf_path))
+
+    # 2. Fallback to stored metadata when no PDF text available
+    if not doc_text.strip():
+        doc_text = (
+            f"Document Name: {doc.name}
+"
+            f"Type: {doc.type}
+"
+            f"Summary: {doc.summary}
+"
+        )
+        if doc.clauses:
+            doc_text += "Clauses: " + ", ".join(c.label for c in doc.clauses) + "
+"
+
+    doc_text = doc_text[:8000]  # stay within token budget
+
+    llm = get_llm()
+    if llm is None:
+        print("[RiskAI] No LLM available, keeping existing risk data.")
+        return
+
+    severity_opts = "high|medium|low"
+    prompt = f"""You are an expert legal risk analyst. Analyze the following legal document and identify all significant legal risks.
+
+Document:
+\'\'\'
+{doc_text}
+\'\'\'
+
+Respond ONLY with a valid JSON object in this exact format (no markdown, no explanation):
+{{
+  "risk_score": <integer 0-100, where 0=no risk 100=extreme risk>,
+  "findings": [
+    {{
+      "title": "<short risk title>",
+      "severity": "<{severity_opts}>",
+      "detail": "<1-2 sentence description of the specific legal risk found in the document>",
+      "suggestion": "<concrete negotiation fix or mitigation step>"
+    }}
+  ]
+}}
+
+Rules:
+- risk_score: 0-39=low risk, 40-65=moderate risk, 66-100=high risk
+- Identify 2-6 real findings based on actual document content
+- If document text is minimal, infer likely risks from document type and name
+- Every finding must have a concrete, actionable suggestion
+- Output ONLY the JSON, nothing else"""
+
+    try:
+        response = llm.invoke(prompt)
+        raw = response.content.strip()
+
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+        data = _json.loads(raw)
+        score = max(0, min(100, int(data.get("risk_score", 50))))
+        findings = data.get("findings", [])
+
+        # Update the risk score on the document record
+        doc.risk_score = score
+
+        # Remove old risk findings
+        for old in list(doc.risks):
+            db.delete(old)
+        db.flush()
+
+        # Insert new AI-generated findings
+        for f in findings:
+            sev = f.get("severity", "medium")
+            if sev not in ("high", "medium", "low"):
+                sev = "medium"
+            db.add(RiskFindingDB(
+                document_id=doc.id,
+                title=str(f.get("title", "Risk Finding"))[:200],
+                severity=sev,
+                detail=str(f.get("detail", ""))[:1000],
+                suggestion=str(f.get("suggestion", ""))[:1000],
+            ))
+
+        db.commit()
+        db.refresh(doc)
+        print(f"[RiskAI] '{doc.name}' scored {score}/100 with {len(findings)} findings.")
+
+    except Exception as e:
+        print(f"[RiskAI] Analysis failed for '{doc.name}': {e}")
+        # Do NOT wipe existing data on failure - leave as-is
 
 
 def _normalized_type(name: str, fallback: str = "Contract") -> str:
@@ -506,6 +631,11 @@ def run_risk_analysis(payload: dict, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="No documents available for risk analysis.")
 
+    # Run real AI risk analysis - reads PDF, calls Groq LLM, updates DB
+    _run_ai_risk_analysis(doc, db)
+
+    # Re-fetch from DB to get the latest AI-generated findings
+    db.refresh(doc)
     serialized = _serialize_doc_db(doc)
     return {
         "document": serialized,
