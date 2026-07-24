@@ -1,0 +1,6 @@
+{
+  "buildCommand": "cd frontend/lexassist-ai && npm run build",
+  "installCommand": "cd frontend/lexassist-ai && npm install",
+  "outputDirectory": "frontend/lexassist-ai/.next",
+  "framework": "nextjs"
+}
